@@ -1,6 +1,6 @@
 # ONVIF Camera Client (Astra Linux 1.8)
 
-Простой клиент видеонаблюдения: поиск камер по **ONVIF / WS-Discovery** в локальной сети и вывод до **4 RTSP-потоков** на экран (сетка 1×1 / 2×2). Стек: Qt 5 (Widgets, Network) + FFmpeg (libav).
+Простой клиент видеонаблюдения: поиск камер по **ONVIF / WS-Discovery** в локальной сети и до **18 RTSP-потоков** на экран (пресеты сетки: 1×1, 2×2, 3×3, 4×4, 3×6 и 6×3 — по 18). Стек: Qt 5 (Widgets, Network) + FFmpeg (libav).
 
 ## Быстрый старт (релизный пакет)
 Скачайте `onvif-camera-client-1.0.0-astra1.8-x86_64.tar.gz` из [Releases](../../releases), затем:

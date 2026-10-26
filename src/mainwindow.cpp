@@ -18,7 +18,7 @@
 #include <QApplication>
 #include <QUrl>
 
-static const int MAX_STREAMS = 16;
+static const int MAX_STREAMS = 18;
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -82,10 +82,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     // --- Правая панель: сетка видео ---
     m_layoutCombo = new QComboBox;
-    m_layoutCombo->addItem(QStringLiteral("1x1"), 1);
-    m_layoutCombo->addItem(QStringLiteral("2x2"), 2);
-    m_layoutCombo->addItem(QStringLiteral("3x3"), 3);
-    m_layoutCombo->addItem(QStringLiteral("4x4"), 4);
+    // Пресеты сетки: data = cols*100 + rows (напр. 306 => 3 колонки x 6 рядов)
+    m_layoutCombo->addItem(QStringLiteral("1x1"), 101);
+    m_layoutCombo->addItem(QStringLiteral("2x2"), 202);
+    m_layoutCombo->addItem(QStringLiteral("3x3"), 303);
+    m_layoutCombo->addItem(QStringLiteral("4x4"), 404);
+    m_layoutCombo->addItem(QStringLiteral("3x6 (18)"), 318);
+    m_layoutCombo->addItem(QStringLiteral("6x3 (18)"), 603);
     m_layoutCombo->setCurrentIndex(1);
     connect(m_layoutCombo, QOverload<int>::of(&QComboBox::activated),
             this, &MainWindow::setLayoutPreset);
@@ -124,7 +127,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_discovery, &OnvifDiscovery::finished,
             this, &MainWindow::onDiscoveryFinished);
 
-    setLayoutPreset(2);
+    setLayoutPreset(m_layoutCombo->currentIndex());
     resize(1280, 720);
 }
 
@@ -206,14 +209,17 @@ void MainWindow::openStreamInCell(const QString &url, const QString &title,
 
     int idx = firstFreeCell();
     if (idx < 0) {
-        // расширить сетку на строку
-        if (m_cells.size() + m_cols > MAX_STREAMS) {
+        // расширить сетку на строку (не больше MAX_STREAMS ячеек)
+        const int currentTotal = m_cols * m_rows;
+        if (currentTotal >= MAX_STREAMS) {
             QMessageBox::warning(this, QStringLiteral("Потоки"),
                                  QStringLiteral("Нет свободных ячеек."));
             return;
         }
-        while (m_cells.size() < size_t((m_cells.size() / m_cols + 1) * m_cols))
+        const int need = qMin(currentTotal + m_cols, MAX_STREAMS);
+        while (m_cells.size() < need)
             createOneCell();
+        m_rows = (need + m_cols - 1) / m_cols;
         rebuildGrid();
         idx = firstFreeCell();
     }
@@ -275,8 +281,10 @@ void MainWindow::createOneCell()
 
 void MainWindow::setLayoutPreset(int comboIdx)
 {
-    m_cols = m_layoutCombo->itemData(comboIdx).toInt();
-    const int total = m_cols * m_cols;
+    const int data = m_layoutCombo->itemData(comboIdx).toInt();
+    m_cols = data / 100;
+    m_rows = data % 100;
+    const int total = m_cols * m_rows;
 
     // создать недостающие ячейки
     while (m_cells.size() < total)
@@ -295,7 +303,7 @@ void MainWindow::rebuildGrid()
     while (m_grid->count())
         m_grid->takeAt(0);
 
-    const int total = m_cols * m_cols;
+    const int total = m_cols * m_rows;
     for (int i = 0; i < qMin(total, int(m_cells.size())); ++i) {
         m_cells[i]->setVisible(true);
         m_grid->addWidget(m_cells[i], i / m_cols, i % m_cols);
@@ -305,7 +313,7 @@ void MainWindow::rebuildGrid()
 
     for (int c = 0; c < m_cols; ++c)
         m_grid->setColumnStretch(c, 1);
-    for (int r = 0; r < m_cols; ++r)
+    for (int r = 0; r < m_rows; ++r)
         m_grid->setRowStretch(r, 1);
 }
 
