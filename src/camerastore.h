@@ -12,6 +12,7 @@ struct SavedCamera
     QString path = QStringLiteral("/onvif1"); // путь потока
     QString user;      // логин
     QString password;  // пароль
+    QString codec = QStringLiteral("h264"); // кодек/подсказка пути (h264, mjpeg...)
     QString rtspPath;  // готовый RTSP URL (если задан — перекрывает ip/port/path)
 
     QString url() const

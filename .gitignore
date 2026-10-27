@@ -1,1 +1,10 @@
-*.tar.gz
+build/
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+*.out
+*.log
+*.tmp

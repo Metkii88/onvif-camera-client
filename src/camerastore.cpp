@@ -37,6 +37,7 @@ QList<SavedCamera> CameraStore::load()
         c.path     = o.value("path").toString("/onvif1");
         c.user     = o.value("user").toString();
         c.password = o.value("password").toString();
+        c.codec    = o.value("codec").toString(QStringLiteral("h264"));
         c.rtspPath = o.value("rtsp").toString();
         if (!c.ip.isEmpty() || !c.rtspPath.isEmpty())
             list.append(c);
@@ -55,6 +56,7 @@ bool CameraStore::save(const QList<SavedCamera> &list)
         o["path"]     = c.path;
         o["user"]     = c.user;
         o["password"] = c.password;
+        o["codec"]    = c.codec;
         o["rtsp"]     = c.rtspPath;
         arr.append(o);
     }

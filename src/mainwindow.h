@@ -16,6 +16,7 @@ class QLabel;
 class QGridLayout;
 class QWidget;
 class QKeyEvent;
+class QFrame;
 
 // Главное окно клиента камер
 class MainWindow : public QMainWindow
@@ -66,7 +67,8 @@ private:
     int firstFreeCell() const;
     void refreshSavedList();
     void connectSaved(const SavedCamera &c);
-    void toggleFullscreen();
+    void toggleGridFullscreen();   // полный экран ТОЛЬКО для сетки камер
+    bool eventFilter(QObject *obj, QEvent *ev) override;
 
     // UI
     QListWidget *m_camList = nullptr;     // найденные камеры (ONVIF multicast)
@@ -79,6 +81,11 @@ private:
     QLabel *m_statusLabel = nullptr;
     QWidget *m_gridWidget = nullptr;
     QGridLayout *m_grid = nullptr;
+    QWidget *m_rightPanel = nullptr;      // панель сетки (для полноэкранного режима)
+    QWidget *m_leftPanel = nullptr;       // панель управления (прячется в FS)
+    QFrame  *m_header = nullptr;          // шапка приложения (прячется в FS)
+    QWidget *m_gridToolbar = nullptr;     // строка «Сетка: … / Полный экран» (прячется в FS)
+    bool m_gridFullscreen = false;
 
     OnvifDiscovery *m_discovery = nullptr;
     QList<StreamEntry> m_streams;         // активные потоки (max 18)

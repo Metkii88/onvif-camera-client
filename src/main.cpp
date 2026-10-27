@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     app.setApplicationName("onvif-client");
-    app.setApplicationVersion("2.1.0");
+    app.setApplicationVersion("2.2.0");
     app.setOrganizationName("local");
 
     QCommandLineParser parser;

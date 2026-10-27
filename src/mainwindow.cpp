@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
+#include <QFrame>
 #include <QTabWidget>
 #include <QListWidget>
 #include <QComboBox>
@@ -141,8 +142,8 @@ MainWindow::MainWindow(QWidget *parent)
     auto *leftLayout = new QVBoxLayout;
     leftLayout->addWidget(tabs);
 
-    QWidget *leftPanel = new QWidget;
-    leftPanel->setLayout(leftLayout);
+    m_leftPanel = new QWidget;
+    m_leftPanel->setLayout(leftLayout);
 
     // --- Правая панель: сетка видео ---
     m_layoutCombo = new QComboBox;
@@ -158,27 +159,35 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::setLayoutPreset);
 
     m_gridWidget = new QWidget;
+    m_gridWidget->setObjectName("gridRoot");   // в FS-режиме: фон без рамки (см. style.qss)
     m_grid = new QGridLayout(m_gridWidget);
     m_grid->setSpacing(2);
     m_grid->setContentsMargins(2, 2, 2, 2);
 
     auto *rightLayout = new QVBoxLayout;
-    auto *topRow = new QHBoxLayout;
+    rightLayout->setContentsMargins(4, 4, 4, 4);
+    m_gridToolbar = new QWidget;                 // прячется в полноэкранном режиме сетки
+    auto *topRow = new QHBoxLayout(m_gridToolbar);
+    topRow->setContentsMargins(0, 0, 0, 0);
     topRow->addWidget(new QLabel(QStringLiteral("Сетка:")));
     topRow->addWidget(m_layoutCombo);
-    QPushButton *fsBtn = new QPushButton(QStringLiteral("⛶ Полный экран (F11)"));
-    connect(fsBtn, &QPushButton::clicked, this, &MainWindow::toggleFullscreen);
+    QPushButton *fsBtn = new QPushButton(QStringLiteral("⛶ Только сетка на весь экран (F11)"));
+    fsBtn->setToolTip(QStringLiteral(
+        "Развернуть на весь экран ТОЛЬКО сетку из камер:\n"
+        "панель управления, шапка и строка состояния скрываются.\n"
+        "Выход — F11 или Esc."));
+    connect(fsBtn, &QPushButton::clicked, this, &MainWindow::toggleGridFullscreen);
     topRow->addWidget(fsBtn);
     topRow->addStretch();
-    rightLayout->addLayout(topRow);
+    rightLayout->addWidget(m_gridToolbar);
     rightLayout->addWidget(m_gridWidget, 1);
 
-    QWidget *rightPanel = new QWidget;
-    rightPanel->setLayout(rightLayout);
+    m_rightPanel = new QWidget;
+    m_rightPanel->setLayout(rightLayout);
 
     auto *splitter = new QSplitter(Qt::Horizontal);
-    splitter->addWidget(leftPanel);
-    splitter->addWidget(rightPanel);
+    splitter->addWidget(m_leftPanel);
+    splitter->addWidget(m_rightPanel);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({340, 900});
@@ -189,15 +198,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     // --- Верхняя шапка с названием приложения ---
     {
-        auto *header = new QFrame;
-        header->setObjectName("appHeader");
-        header->setStyleSheet("QFrame#appHeader{background:#171b22;border-bottom:1px solid #3a4250;}");
-        auto *hl = new QHBoxLayout(header);
+        m_header = new QFrame;
+        m_header->setObjectName("appHeader");
+        m_header->setStyleSheet("QFrame#appHeader{background:#171b22;border-bottom:1px solid #3a4250;}");
+        auto *hl = new QHBoxLayout(m_header);
         hl->setContentsMargins(14, 8, 14, 8);
         auto *title = new QLabel(QStringLiteral(
             "<span style='font-size:22px;'>📷</span>  "
             "<span style='font-size:16px;font-weight:bold;color:#e8eef5;'>Камеры</span>"
-            "<span style='font-size:12px;color:#8fa2ba;'>  ·  ONVIF клиент v2.1</span>"));
+            "<span style='font-size:12px;color:#8fa2ba;'>  ·  ONVIF клиент v2.2</span>"));
         title->setTextFormat(Qt::RichText);
         hl->addWidget(title);
         hl->addStretch();
@@ -207,7 +216,7 @@ MainWindow::MainWindow(QWidget *parent)
         rootLay->setContentsMargins(0, 0, 0, 0);
         rootLay->setSpacing(0);
         splitter->setParent(nullptr);
-        rootLay->addWidget(header);
+        rootLay->addWidget(m_header);
         rootLay->addWidget(splitter, 1);
         setCentralWidget(root);
     }
@@ -526,13 +535,20 @@ void MainWindow::openScanDialog()
     // если есть выделенная сохранённая камера — взять её параметры как основу
     auto *item = m_savedList->currentItem();
     const QList<SavedCamera> list = CameraStore::load();
-    if (item && m_savedList->row(item) < list.size())
+    if (item && m_savedList->row(item) < list.size()) {
         tpl = CameraTemplate::fromSaved(list[m_savedList->row(item)]);
-    else {
-        tpl.ip = QStringLiteral("192.168.1");
-        tpl.user = QStringLiteral("admin");
+    } else {
+        // шаблон по умолчанию: 192.168.0.1-254:554, h264, rtsp, admin/admin
+        tpl.ip       = QStringLiteral("192.168.0.1-254");
+        tpl.port     = 554;
+        tpl.user     = QStringLiteral("admin");
+        tpl.password = QStringLiteral("admin");
+        tpl.codec    = QStringLiteral("h264");
+        tpl.path     = QStringLiteral("/onvif1");
     }
 
+    // Если в имени/IP сохранённой камеры записан диапазон (192.168.0.1-254) —
+    // parseIpRange в конструкторе сканера разберёт его и подставит в поля.
     CameraScanner sc(tpl, this);
     sc.exec();
     refreshSavedList(); // сканер мог что-то сохранить
@@ -540,25 +556,39 @@ void MainWindow::openScanDialog()
 
 // ---------- Полный экран ----------
 
-void MainWindow::toggleFullscreen()
+void MainWindow::toggleGridFullscreen()
 {
-    if (isFullScreen()) {
-        showNormal();
-        statusBar()->show();
-    } else {
-        showFullScreen();
+    m_gridFullscreen = !m_gridFullscreen;
+
+    if (m_gridFullscreen) {
+        // спрятать шапку/левую панель/тулбар — сетка остаётся одна на весь экран
+        m_header->setVisible(false);
+        m_leftPanel->setVisible(false);
+        m_gridToolbar->setVisible(false);
         statusBar()->hide();
+        showFullScreen();
+    } else {
+        showNormal();
+        m_header->setVisible(true);
+        m_leftPanel->setVisible(true);
+        m_gridToolbar->setVisible(true);
+        statusBar()->show();
     }
+}
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *ev)
+{
+    return QMainWindow::eventFilter(obj, ev);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *ev)
 {
     if (ev->key() == Qt::Key_F11) {
-        toggleFullscreen();
+        toggleGridFullscreen();
         return;
     }
-    if (ev->key() == Qt::Key_Escape && isFullScreen()) {
-        toggleFullscreen();
+    if (ev->key() == Qt::Key_Escape && m_gridFullscreen) {
+        toggleGridFullscreen();
         return;
     }
     QMainWindow::keyPressEvent(ev);

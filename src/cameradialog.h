@@ -4,20 +4,37 @@
 #include "camerastore.h"
 
 class QLineEdit;
+class QLabel;
+class QComboBox;
 class QSpinBox;
 class QCheckBox;
 class QPushButton;
+
+// Разобрать адрес из строки шаблона: "192.168.0.1-254", "192.168.0.1-30",
+// "192.168.0.1", "192.168.0" (весь /24). Возвращает префикс ("192.168.0")
+// и диапазон последних октетов; если строка не похожа на IPv4 — ok == false.
+struct IpRangeParse
+{
+    bool ok = false;
+    QString prefix;      // "192.168.0"
+    int from = 1;
+    int to = 254;
+    bool isRange = false;
+};
+
+IpRangeParse parseIpRange(const QString &text);
 
 // Шаблон поиска/подключения камеры: параметры сети + учётные данные.
 // Используется и для ручного ввода RTSP, и для сохранения в хранилище.
 struct CameraTemplate
 {
     QString name;
-    QString ip;
+    QString ip;                      // IP или диапазон: 192.168.0.1-254
     int     port = 554;
     QString path = QStringLiteral("/onvif1");
     QString user;
     QString password;
+    QString codec = QStringLiteral("h264"); // подсказка пути потока при поиске
     bool    useRtspUrl = false;   // вместо ip/port/path — готовый RTSP URL
     QString rtspUrl;
 
@@ -30,6 +47,7 @@ struct CameraTemplate
         c.path     = path.trimmed();
         c.user     = user;
         c.password = password;
+        c.codec    = codec.trimmed().toLower();
         c.rtspPath = useRtspUrl ? rtspUrl.trimmed() : QString();
         return c;
     }
@@ -43,6 +61,7 @@ struct CameraTemplate
         t.path     = c.path;
         t.user     = c.user;
         t.password = c.password;
+        t.codec    = c.codec.isEmpty() ? QStringLiteral("h264") : c.codec;
         if (!c.rtspPath.isEmpty()) {
             t.useRtspUrl = true;
             t.rtspUrl    = c.rtspPath;
@@ -69,9 +88,11 @@ private:
     QLineEdit   *m_ip        = nullptr;
     QSpinBox    *m_port      = nullptr;
     QLineEdit   *m_path      = nullptr;
+    QComboBox   *m_codec     = nullptr;
     QLineEdit   *m_user      = nullptr;
     QLineEdit   *m_pass      = nullptr;
     QCheckBox   *m_rtspChk   = nullptr;
     QLineEdit   *m_rtspUrl   = nullptr;
     QPushButton *m_ok        = nullptr;
+    QLabel      *m_rangeHint = nullptr;
 };
