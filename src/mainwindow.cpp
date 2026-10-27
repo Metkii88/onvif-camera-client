@@ -32,6 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_camList = new QListWidget;
     m_camList->setAlternatingRowColors(true);
     m_searchBtn = new QPushButton(QStringLiteral("🔍 Поиск ONVIF"));
+    m_searchBtn->setObjectName("btnPrimary");
     connect(m_searchBtn, &QPushButton::clicked, this, &MainWindow::startDiscovery);
 
     m_urlCombo = new QComboBox;
@@ -185,6 +186,31 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_statusLabel = new QLabel(QStringLiteral("Готов. Нажмите «Поиск ONVIF» для поиска камер."));
     statusBar()->addPermanentWidget(m_statusLabel);
+
+    // --- Верхняя шапка с названием приложения ---
+    {
+        auto *header = new QFrame;
+        header->setObjectName("appHeader");
+        header->setStyleSheet("QFrame#appHeader{background:#171b22;border-bottom:1px solid #3a4250;}");
+        auto *hl = new QHBoxLayout(header);
+        hl->setContentsMargins(14, 8, 14, 8);
+        auto *title = new QLabel(QStringLiteral(
+            "<span style='font-size:22px;'>📷</span>  "
+            "<span style='font-size:16px;font-weight:bold;color:#e8eef5;'>Камеры</span>"
+            "<span style='font-size:12px;color:#8fa2ba;'>  ·  ONVIF клиент v2.1</span>"));
+        title->setTextFormat(Qt::RichText);
+        hl->addWidget(title);
+        hl->addStretch();
+        // centralWidget — QSplitter, поэтому оборачиваем его в свой макет
+        QWidget *root = new QWidget;
+        auto *rootLay = new QVBoxLayout(root);
+        rootLay->setContentsMargins(0, 0, 0, 0);
+        rootLay->setSpacing(0);
+        splitter->setParent(nullptr);
+        rootLay->addWidget(header);
+        rootLay->addWidget(splitter, 1);
+        setCentralWidget(root);
+    }
 
     // --- Обнаружение ---
     m_discovery = new OnvifDiscovery(this);
