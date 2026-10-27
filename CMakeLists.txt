@@ -45,3 +45,6 @@ install(FILES packaging/org.onvif.client.svg
 install(DIRECTORY packaging/icons/hicolor/
         DESTINATION share/icons/hicolor
         FILES_MATCHING PATTERN "*.png")
+
+# Тема оформления (правится без пересборки)
+install(FILES themes/style.qss DESTINATION share/onvif-camera-client/themes)
