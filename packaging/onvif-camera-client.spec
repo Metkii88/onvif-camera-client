@@ -1,5 +1,5 @@
 Name:           onvif-camera-client
-Version:        2.0.0
+Version:        2.2.0
 Release:        1%{?dist}
 Summary:        ONVIF camera discovery and multi-stream viewer
 Summary(ru):    ONVIF-поиск камер и просмотр нескольких потоков
@@ -39,13 +39,18 @@ install -Dm644 packaging/org.onvif.client.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/org.onvif.client.svg
 
 %files
-%license LICENSE
 %doc README.md
 %{_bindir}/onvif-client
 %{_datadir}/applications/org.onvif.client.desktop
 %{_datadir}/icons/hicolor/*/apps/org.onvif.client.*
 
 %changelog
+* Tue Oct 27 2026 Metkii88 <metkii88@example.local> - 2.2.0-1
+- Fixed template-based RTSP search: IP ranges (192.168.0.1-254), Basic+Digest auth
+- Stream path presets for Hikvision/Dahua/Axis, defaults port 554 / h264 / admin
+- Input field text no longer clipped by borders (QSS padding fixes)
+- Fullscreen mode applies to the camera grid only, not the whole window
+
 * Tue Oct 27 2026 Metkii88 <metkii88@example.local> - 2.0.0-1
 - Camera search templates (IP/port/path/login/password)
 - Subnet scanner (ONVIF multicast + RTSP DESCRIBE check)
