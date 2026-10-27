@@ -81,8 +81,9 @@ private:
     QGridLayout *m_grid = nullptr;
 
     OnvifDiscovery *m_discovery = nullptr;
-    QList<StreamEntry> m_streams;         // активные потоки (max 16)
+    QList<StreamEntry> m_streams;         // активные потоки (max 18)
     QVector<VideoCell *> m_cells;         // ячейки сетки
     int m_cols = 2;                       // колонок в сетке
+    int m_rows = 2;                       // рядов в сетке
     VideoCell *m_maximized = nullptr;     // развёрнутая ячейка (двойной клик)
 };

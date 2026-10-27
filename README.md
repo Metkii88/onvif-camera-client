@@ -1,97 +1,24 @@
-# ONVIF Camera Client v2.0
+# ONVIF Camera Client (Astra Linux 1.8)
 
-Клиент для просмотра потоков IP-камер с поиском камер по протоколу **ONVIF** в локальной сети и выводом нескольких видеопотоков на экран. Разработан и протестирован для **Astra Linux 1.8 (x86_64)**.
-
-## Возможности
-
-- 🔍 **ONVIF-поиск камер** в локальной сети (WS-Discovery multicast `239.255.255.250:3701`) — вкладка «ONVIF (multicast)»
-- 📝 **Шаблон добавления камеры с параметрами**: адрес (IP/хост), порт, логин, пароль, путь RTSP — диалог «Добавить камеру» позволяет подключить камеру без discovery-протокола; шаблон сохраняется
-- 💾 **Хранилище настроенных камер**: список подключённых камер хранится в `~/.config/OnvifClient/cameras.json` (пароли обфусцированы base64). Вкладка «Сохранённые камеры»: выбор, подключение, редактирование, удаление
-- 🖥 **Многопоточный просмотр**: несколько RTSP-потоков отображаются одновременно в сетке ячеек
-- ⛶ **Полноэкранный режим**: `F11` — включить/выключить, `Esc` — выход из полноэкранного режима
-- 🚀 **Запуск с заданным профилем**: `--profile "имя1,имя2"` + `--fullscreen` — приложение сразу подключает сохранённые камеры и разворачивается на весь экран
-- 🎨 **Установка в систему**: `install.sh` кладёт бинарник в `/usr/local/bin`, `.desktop`-файл в меню приложений и **иконку камеры** (SVG + PNG 16–256 px) в тему иконок
+Простой клиент видеонаблюдения: поиск камер по **ONVIF / WS-Discovery** в локальной сети и до **18 RTSP-потоков** на экран (пресеты сетки: 1×1, 2×2, 3×3, 4×4, 3×6 и 6×3 — по 18). Стек: Qt 5 (Widgets, Network) + FFmpeg (libav).
 
 ## Быстрый старт (релизный пакет)
-
+Скачайте `onvif-camera-client-1.0.0-astra1.8-x86_64.tar.gz` из [Releases](../../releases), затем:
 ```bash
-tar xzf onvif-camera-client-2.0.0-astra1.8-x86_64.tar.gz
-cd onvif-camera-client-2.0.0
-./bin/onvif-client            # запуск без установки
-sudo ./install.sh             # или установка в систему (PREFIX=/opt — по желанию)
-onvif-client                  # запуск из любого места, значок в меню приложений
+tar xzf onvif-camera-client-1.0.0-astra1.8-x86_64.tar.gz
+cd onvif-camera-client-1.0.0 && ./run.sh
 ```
-
-Системные зависимости (штатные пакеты Astra Linux 1.8):
-
-```bash
-apt install libqt5widgets5 libqt5network5 libavformat57 libavcodec57 libavutil55 libswscale4
-```
-
-## Командная строка
-
-```
-onvif-client [параметры]
-
-  -p, --profile <имена>  Подключить сохранённые камеры при старте
-                         (имена или IP, через запятую или повтор флага)
-  -f, --fullscreen       Запустить в полноэкранном режиме
-  -h, --help             Справка
-  -v, --version          Версия
-```
-
-Примеры:
-
-```bash
-# Полный экран с двумя сохранёнными камерами
-onvif-client --profile "Двор,Вход" --fullscreen
-
-# Все параметры коротко
-onvif-client -p Двор -p Вход -f
-```
-
-## Поиск и добавление камер
-
-### Через ONVIF Discovery
-Вкладка **«ONVIF (multicast)»** → «Начать поиск». Клиент рассылает WS-Discovery probe и собирает ответы камер (модель, адрес, порт). Выбор камеры и кнопка «Подключить» запрашивает `GetProfiles`/`GetStreamUri` по ONVIF (с учётом логина/пароля) и открывает поток; камера автоматически сохраняется в списке.
-
-### Шаблон с параметрами (ручной ввод)
-Кнопка **«Добавить камеру»**: задайте адрес, порт, логин, пароль и путь RTSP. Камера подключается по указанным параметрам и сохраняется в хранилище — при следующих запусках её достаточно выбрать в списке или указать через `--profile`.
-
-## Горячие клавиши
-
-| Клавиша | Действие |
-|---|---|
-| `F11` | Переключить полноэкранный режим |
-| `Esc` | Выйти из полноэкранного режима |
-| `Ctrl+Q` | Выход |
+Все зависимости (Qt5, FFmpeg) включены в пакет — ничего дополнительно ставить не нужно.
 
 ## Сборка из исходников
-
-Зависимости: Qt 5.15 (Widgets/Network), FFmpeg/libav (libavformat, libavcodec, libavutil, libswscale), CMake ≥ 3.16.
-
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+sudo apt install qtbase5-dev cmake pkg-config \
+     libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+cmake -B build && cmake --build build -j
+./build/onvif-client
 ```
 
-## Структура репозитория
-
-```
-src/              исходники (Qt/C++): main.cpp, mainwindow.*, cameradialog.*,
-                  camerastore.*, camerascanner.*, onvifdiscovery.*, videocell.*, cameradecoder.*
-packaging/        .desktop, SVG-иконка камеры, spec для RPM
-install.sh        установка в /usr/local (бинарник, desktop-файл, иконки)
-CMakeLists.txt    сборка
-RELEASE.md        заметки релиза
-```
-
-## Требования
-
-- Astra Linux 1.8 (x86_64) / совместимый Debian
-- X11/xcb рабочий стол (Orel/Yed)
-- Доступ к камерам по ONVIF/RTSP
-
-## Лицензия
-
-MIT
+## Структура
+* `src/onvifdiscovery.*` — WS-Discovery (UDP multicast 239.255.255.250:3702)
+* `src/cameradecoder.*` — RTSP-захват/декодирование (libavformat/libavcodec/swscale)
+* `src/videocell.*`, `src/mainwindow.*` — UI мультипросмотра
