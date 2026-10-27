@@ -1,12 +1,14 @@
 #include "mainwindow.h"
 #include "cameradecoder.h"
 #include "videocell.h"
+#include "camerascanner.h"
 
 #include <QWidget>
 #include <QGridLayout>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
+#include <QTabWidget>
 #include <QListWidget>
 #include <QComboBox>
 #include <QLineEdit>
@@ -17,6 +19,7 @@
 #include <QStatusBar>
 #include <QApplication>
 #include <QUrl>
+#include <QKeyEvent>
 
 static const int MAX_STREAMS = 16;
 
@@ -62,20 +65,80 @@ MainWindow::MainWindow(QWidget *parent)
     QPushButton *removeBtn = new QPushButton(QStringLiteral("✖ Отключить выделенный поток"));
     connect(removeBtn, &QPushButton::clicked, this, &MainWindow::removeSelectedStream);
 
-    auto *leftLayout = new QVBoxLayout;
-    leftLayout->addWidget(new QLabel(QStringLiteral("<b>Найденные камеры (ONVIF):</b>")));
-    leftLayout->addWidget(m_searchBtn);
-    leftLayout->addWidget(m_camList, 1);
-    leftLayout->addWidget(addCamBtn);
-    leftLayout->addSpacing(10);
-    leftLayout->addWidget(new QLabel(QStringLiteral("<b>Ручной RTSP-URL:</b>")));
-    leftLayout->addWidget(m_urlCombo);
+    // --- Вкладки: ONVIF-поиск / сохранённые камеры / ручной URL ---
+    auto *tabs = new QTabWidget;
+
+    // вкладка 1: обнаружение по multicast
+    QWidget *onvifTab = new QWidget;
+    auto *onvifLayout = new QVBoxLayout(onvifTab);
+    onvifLayout->addWidget(m_searchBtn);
+    onvifLayout->addWidget(m_camList, 1);
+    onvifLayout->addWidget(addCamBtn);
+    tabs->addTab(onvifTab, QStringLiteral("ONVIF (multicast)"));
+
+    // вкладка 2: сохранённые настроенные камеры («предметы»)
+    m_savedList = new QListWidget;
+    m_savedList->setAlternatingRowColors(true);
+    connect(m_savedList, &QListWidget::itemDoubleClicked,
+            this, [this](QListWidgetItem *) { connectSelectedSaved(); });
+
+    QPushButton *newTplBtn = new QPushButton(QStringLiteral("➕ Новый шаблон..."));
+    connect(newTplBtn, &QPushButton::clicked, this, &MainWindow::newTemplate);
+    QPushButton *scanBtn = new QPushButton(QStringLiteral("📡 Поиск по шаблону (подсеть)..."));
+    connect(scanBtn, &QPushButton::clicked, this, &MainWindow::openScanDialog);
+    QPushButton *editBtn = new QPushButton(QStringLiteral("✏ Изменить"));
+    connect(editBtn, &QPushButton::clicked, this, &MainWindow::editSelectedSaved);
+    QPushButton *connBtn = new QPushButton(QStringLiteral("▶ Подключить выбранную"));
+    connect(connBtn, &QPushButton::clicked, this, &MainWindow::connectSelectedSaved);
+    QPushButton *delBtn = new QPushButton(QStringLiteral("🗑 Удалить из хранилища"));
+    connect(delBtn, &QPushButton::clicked, this, &MainWindow::deleteSelectedSaved);
+
+    QWidget *savedTab = new QWidget;
+    auto *savedLayout = new QVBoxLayout(savedTab);
+    savedLayout->addWidget(newTplBtn);
+    savedLayout->addWidget(scanBtn);
+    savedLayout->addWidget(m_savedList, 1);
+    auto *savedBtnRow = new QHBoxLayout;
+    savedBtnRow->addWidget(editBtn);
+    savedBtnRow->addWidget(delBtn);
+    savedLayout->addLayout(savedBtnRow);
+    savedLayout->addWidget(connBtn);
+    tabs->addTab(savedTab, QStringLiteral("Сохранённые камеры"));
+
+    // вкладка 3: ручной RTSP
+    QWidget *manualTab = new QWidget;
+    auto *manualLayout = new QVBoxLayout(manualTab);
+    manualLayout->addWidget(new QLabel(QStringLiteral("<b>Ручной RTSP-URL:</b>")));
+    manualLayout->addWidget(m_urlCombo);
     auto *credRow = new QHBoxLayout;
     credRow->addWidget(m_userEdit);
     credRow->addWidget(m_passEdit);
-    leftLayout->addLayout(credRow);
-    leftLayout->addWidget(addBtn);
-    leftLayout->addWidget(removeBtn);
+    manualLayout->addLayout(credRow);
+    manualLayout->addWidget(addBtn);
+    QPushButton *saveManualBtn = new QPushButton(QStringLiteral("💾 Сохранить в хранилище"));
+    connect(saveManualBtn, &QPushButton::clicked, this, [this] {
+        CameraTemplate t;
+        t.useRtspUrl = true;
+        t.rtspUrl = m_urlCombo->currentText().trimmed();
+        t.user = m_userEdit->text().trimmed();
+        t.password = m_passEdit->text();
+        if (t.rtspUrl.isEmpty()) return;
+        bool ok = false;
+        t.name = QInputDialog::getText(this, QStringLiteral("Имя камеры"),
+                                       QStringLiteral("Название:"), QLineEdit::Normal,
+                                       QUrl(t.rtspUrl).host(), &ok);
+        if (!ok || t.name.isEmpty()) return;
+        CameraStore::addOrUpdate(t.toSaved());
+        refreshSavedList();
+        m_statusLabel->setText(QStringLiteral("Камера «%1» сохранена.").arg(t.name));
+    });
+    manualLayout->addWidget(saveManualBtn);
+    manualLayout->addWidget(removeBtn);
+    manualLayout->addStretch();
+    tabs->addTab(manualTab, QStringLiteral("Ручной URL"));
+
+    auto *leftLayout = new QVBoxLayout;
+    leftLayout->addWidget(tabs);
 
     QWidget *leftPanel = new QWidget;
     leftPanel->setLayout(leftLayout);
@@ -99,6 +162,9 @@ MainWindow::MainWindow(QWidget *parent)
     auto *topRow = new QHBoxLayout;
     topRow->addWidget(new QLabel(QStringLiteral("Сетка:")));
     topRow->addWidget(m_layoutCombo);
+    QPushButton *fsBtn = new QPushButton(QStringLiteral("⛶ Полный экран (F11)"));
+    connect(fsBtn, &QPushButton::clicked, this, &MainWindow::toggleFullscreen);
+    topRow->addWidget(fsBtn);
     topRow->addStretch();
     rightLayout->addLayout(topRow);
     rightLayout->addWidget(m_gridWidget, 1);
@@ -126,6 +192,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     setLayoutPreset(2);
     resize(1280, 720);
+
+    refreshSavedList();
 }
 
 MainWindow::~MainWindow()
@@ -323,4 +391,180 @@ void MainWindow::onCellMaximizeRequested(VideoCell *cell)
     m_grid->addWidget(cell, 0, 0);
     m_grid->setRowStretch(0, 1);
     m_grid->setColumnStretch(0, 1);
+}
+
+// ---------- Шаблоны и хранилище ----------
+
+void MainWindow::refreshSavedList()
+{
+    if (!m_savedList)
+        return;
+    m_savedList->clear();
+    const QList<SavedCamera> list = CameraStore::load();
+    for (const SavedCamera &c : list) {
+        auto *item = new QListWidgetItem(c.displayString());
+        item->setToolTip(QStringLiteral("Имя: %1\nURL: %2\nЛогин: %3")
+                             .arg(c.name, c.url(), c.user));
+        m_savedList->addItem(item);
+    }
+}
+
+void MainWindow::newTemplate()
+{
+    CameraDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    const CameraTemplate t = dlg.templateValue();
+    const SavedCamera c = t.toSaved();
+    if (!CameraStore::addOrUpdate(c)) {
+        QMessageBox::warning(this, QStringLiteral("Хранилище"),
+                             QStringLiteral("Не удалось сохранить камеру."));
+        return;
+    }
+    refreshSavedList();
+    m_statusLabel->setText(QStringLiteral("Шаблон «%1» сохранён.").arg(c.name));
+    connectSaved(c);
+}
+
+void MainWindow::editSelectedSaved()
+{
+    auto *item = m_savedList->currentItem();
+    if (!item) {
+        QMessageBox::information(this, QStringLiteral("Хранилище"),
+                                 QStringLiteral("Выберите камеру в списке."));
+        return;
+    }
+    const int idx = m_savedList->row(item);
+    const QList<SavedCamera> list = CameraStore::load();
+    if (idx < 0 || idx >= list.size())
+        return;
+
+    CameraDialog dlg(this);
+    dlg.setTemplate(CameraTemplate::fromSaved(list[idx]));
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    const SavedCamera updated = dlg.templateValue().toSaved();
+    QList<SavedCamera> mod = list;
+    mod[idx] = updated;
+    CameraStore::save(mod);
+    refreshSavedList();
+    m_statusLabel->setText(QStringLiteral("Камера «%1» обновлена.").arg(updated.name));
+}
+
+void MainWindow::deleteSelectedSaved()
+{
+    auto *item = m_savedList->currentItem();
+    if (!item)
+        return;
+    const int idx = m_savedList->row(item);
+    if (QMessageBox::question(this, QStringLiteral("Хранилище"),
+                              QStringLiteral("Удалить «%1» из сохранённых?").arg(item->text()))
+        != QMessageBox::Yes)
+        return;
+    CameraStore::removeAt(idx);
+    refreshSavedList();
+}
+
+void MainWindow::connectSelectedSaved()
+{
+    auto *item = m_savedList->currentItem();
+    if (!item) {
+        QMessageBox::information(this, QStringLiteral("Хранилище"),
+                                 QStringLiteral("Выберите камеру в списке "
+                                                "(двойной клик — быстрое подключение)."));
+        return;
+    }
+    const int idx = m_savedList->row(item);
+    const QList<SavedCamera> list = CameraStore::load();
+    if (idx < 0 || idx >= list.size())
+        return;
+    connectSaved(list[idx]);
+}
+
+void MainWindow::connectSaved(const SavedCamera &c)
+{
+    openStreamInCell(c.url(), c.name.isEmpty() ? c.ip : c.name, c.user, c.password);
+}
+
+void MainWindow::openScanDialog()
+{
+    CameraTemplate tpl;
+    // если есть выделенная сохранённая камера — взять её параметры как основу
+    auto *item = m_savedList->currentItem();
+    const QList<SavedCamera> list = CameraStore::load();
+    if (item && m_savedList->row(item) < list.size())
+        tpl = CameraTemplate::fromSaved(list[m_savedList->row(item)]);
+    else {
+        tpl.ip = QStringLiteral("192.168.1");
+        tpl.user = QStringLiteral("admin");
+    }
+
+    CameraScanner sc(tpl, this);
+    sc.exec();
+    refreshSavedList(); // сканер мог что-то сохранить
+}
+
+// ---------- Полный экран ----------
+
+void MainWindow::toggleFullscreen()
+{
+    if (isFullScreen()) {
+        showNormal();
+        statusBar()->show();
+    } else {
+        showFullScreen();
+        statusBar()->hide();
+    }
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *ev)
+{
+    if (ev->key() == Qt::Key_F11) {
+        toggleFullscreen();
+        return;
+    }
+    if (ev->key() == Qt::Key_Escape && isFullScreen()) {
+        toggleFullscreen();
+        return;
+    }
+    QMainWindow::keyPressEvent(ev);
+}
+
+// ---------- Запуск с набором (профилем) ----------
+
+void MainWindow::startProfile(const QStringList &names, bool fullscreen)
+{
+    const QList<SavedCamera> list = CameraStore::load();
+    int connected = 0;
+    for (const QString &want : names) {
+        for (const SavedCamera &c : list) {
+            if (c.name.compare(want, Qt::CaseInsensitive) == 0 || c.ip == want) {
+                connectSaved(c);
+                ++connected;
+                break;
+            }
+        }
+    }
+    if (connected == 0)
+        m_statusLabel->setText(QStringLiteral("Профиль не найден: %1")
+                                   .arg(names.join(", ")));
+    else
+        m_statusLabel->setText(QStringLiteral("Профиль: подключено камер — %1").arg(connected));
+
+    if (fullscreen) {
+        // оптимальная сетка под количество потоков
+        const int n = qMin(connected, MAX_STREAMS);
+        int cols = 1;
+        if (n > 1)  cols = 2;
+        if (n > 4)  cols = 3;
+        if (n > 9)  cols = 4;
+        for (int i = 0; i < m_layoutCombo->count(); ++i)
+            if (m_layoutCombo->itemData(i).toInt() == cols) {
+                setLayoutPreset(i);
+                m_layoutCombo->setCurrentIndex(i);
+                break;
+            }
+        QMetaObject::invokeMethod(this, [this] { showFullScreen(); },
+                                  Qt::QueuedConnection);
+    }
 }

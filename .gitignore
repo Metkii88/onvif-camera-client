@@ -1,4 +1,6 @@
 build/
+stage/
 *.o
 *.obj
 *.out
+onvif-camera-client-*/

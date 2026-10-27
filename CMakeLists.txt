@@ -22,6 +22,9 @@ add_executable(onvif-client
     src/onvifdiscovery.cpp
     src/cameradecoder.cpp
     src/videocell.cpp
+    src/camerastore.cpp
+    src/cameradialog.cpp
+    src/camerascanner.cpp
 )
 
 target_include_directories(onvif-client PRIVATE ${AV_INCLUDE_DIRS})
@@ -33,3 +36,12 @@ target_link_libraries(onvif-client PRIVATE
 target_compile_options(onvif-client PRIVATE ${AV_CFLAGS_OTHER})
 
 install(TARGETS onvif-client RUNTIME DESTINATION bin)
+
+# --- установка в систему: desktop-файл и иконки ---
+install(FILES packaging/org.onvif.client.desktop
+        DESTINATION share/applications)
+install(FILES packaging/org.onvif.client.svg
+        DESTINATION share/icons/hicolor/scalable/apps)
+install(DIRECTORY packaging/icons/hicolor/
+        DESTINATION share/icons/hicolor
+        FILES_MATCHING PATTERN "*.png")

@@ -3,6 +3,8 @@
 #include <QMainWindow>
 #include <QList>
 #include "onvifdiscovery.h"
+#include "camerastore.h"
+#include "cameradialog.h"
 
 class VideoCell;
 class CameraStream;
@@ -13,6 +15,7 @@ class QPushButton;
 class QLabel;
 class QGridLayout;
 class QWidget;
+class QKeyEvent;
 
 // Главное окно клиента камер
 class MainWindow : public QMainWindow
@@ -21,6 +24,12 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+    // запуск с сохранённым набором (имена из хранилища) — для --profile/--fullscreen
+    void startProfile(const QStringList &names, bool fullscreen);
+
+protected:
+    void keyPressEvent(QKeyEvent *ev) override;
 
 private slots:
     // ONVIF-обнаружение
@@ -35,6 +44,13 @@ private slots:
     void setLayoutPreset(int cols);
     void onCellMaximizeRequested(VideoCell *cell);
 
+    // Шаблоны / хранилище
+    void newTemplate();
+    void editSelectedSaved();
+    void connectSelectedSaved();
+    void deleteSelectedSaved();
+    void openScanDialog();
+
 private:
     struct StreamEntry {
         CameraStream *stream = nullptr;
@@ -48,9 +64,13 @@ private:
     void openStreamInCell(const QString &url, const QString &title,
                           const QString &user, const QString &password);
     int firstFreeCell() const;
+    void refreshSavedList();
+    void connectSaved(const SavedCamera &c);
+    void toggleFullscreen();
 
     // UI
-    QListWidget *m_camList = nullptr;     // найденные камеры
+    QListWidget *m_camList = nullptr;     // найденные камеры (ONVIF multicast)
+    QListWidget *m_savedList = nullptr;   // сохранённые настроенные камеры
     QComboBox *m_urlCombo = nullptr;      // ручной RTSP URL
     QLineEdit *m_userEdit = nullptr;
     QLineEdit *m_passEdit = nullptr;
