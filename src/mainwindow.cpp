@@ -562,12 +562,13 @@ void MainWindow::startProfile(const QStringList &names, bool fullscreen)
     if (fullscreen) {
         // оптимальная сетка под количество потоков
         const int n = qMin(connected, MAX_STREAMS);
-        int cols = 1;
-        if (n > 1)  cols = 2;
-        if (n > 4)  cols = 3;
-        if (n > 9)  cols = 4;
+        int data = 101;               // колонки*100 + ряды
+        if (n > 1)  data = 202;
+        if (n > 4)  data = 303;
+        if (n > 9)  data = 404;
+        if (n > 16) data = 306;       // 17-18 потоков -> пресет 3x6
         for (int i = 0; i < m_layoutCombo->count(); ++i)
-            if (m_layoutCombo->itemData(i).toInt() == cols) {
+            if (m_layoutCombo->itemData(i).toInt() == data) {
                 setLayoutPreset(i);
                 m_layoutCombo->setCurrentIndex(i);
                 break;
