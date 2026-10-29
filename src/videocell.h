@@ -13,8 +13,12 @@ public:
     explicit VideoCell(QWidget *parent = nullptr);
 
     void attach(CameraStream *stream, const QString &title);
+    void setStreamCredentials(const QString &user, const QString &password);
     void detach();
     bool hasStream() const { return m_stream != nullptr; }
+    // перезапустить текущий поток (после смены размера ячейки — чтобы кадры
+    // масштабировались на новый размер, а не оставались в старом)
+    void restartStream();
 
     // Двойной клик по ячейке -> запрос на разворот во весь экран
 signals:
@@ -37,4 +41,8 @@ private:
     QElapsedTimer m_fpsTimer;
     int m_frames = 0;
     double m_fps = 0.0;
+    // параметры текущего потока для перезапуска после ресайза
+    QString m_url;
+    QString m_user;
+    QString m_password;
 };

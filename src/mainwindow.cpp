@@ -19,8 +19,13 @@
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QApplication>
+#include <QSettings>
 #include <QUrl>
 #include <QKeyEvent>
+#include <QResizeEvent>
+#include <QShowEvent>
+#include <QCloseEvent>
+#include <QTimer>
 
 static const int MAX_STREAMS = 18;
 
@@ -139,6 +144,46 @@ MainWindow::MainWindow(QWidget *parent)
     manualLayout->addStretch();
     tabs->addTab(manualTab, QStringLiteral("Ручной URL"));
 
+    // вкладка 4: профили сетки (сохранённые наборы камер + раскладка)
+    m_profileList = new QListWidget;
+    m_profileList->setAlternatingRowColors(true);
+    connect(m_profileList, &QListWidget::itemDoubleClicked,
+            this, &MainWindow::onProfileDoubleClicked);
+
+    QPushButton *saveProfBtn = new QPushButton(QStringLiteral("💾 Сохранить сетку как профиль..."));
+    saveProfBtn->setToolTip(QStringLiteral(
+        "Запомнить все подключённые камеры и их позиции в сетке.\n"
+        "Двойной клик по профилю — загрузить сетку."));
+    connect(saveProfBtn, &QPushButton::clicked, this, &MainWindow::saveGridAsProfile);
+    QPushButton *loadProfBtn = new QPushButton(QStringLiteral("▶ Загрузить выбранный профиль"));
+    connect(loadProfBtn, &QPushButton::clicked, this, &MainWindow::loadSelectedProfile);
+    QPushButton *renameProfBtn = new QPushButton(QStringLiteral("✏ Переименовать"));
+    connect(renameProfBtn, &QPushButton::clicked, this, &MainWindow::renameCurrentProfile);
+    QPushButton *delProfBtn = new QPushButton(QStringLiteral("🗑 Удалить профиль"));
+    connect(delProfBtn, &QPushButton::clicked, this, &MainWindow::deleteSelectedProfile);
+
+    QPushButton *startFsProfBtn = new QPushButton(
+        QStringLiteral("▶▶ Запустить выбранный профиль в полном экране"));
+    startFsProfBtn->setToolTip(QStringLiteral(
+        "Загрузить сетку из профиля и сразу развернуть её на весь экран (F11 — выход)."));
+    connect(startFsProfBtn, &QPushButton::clicked, this, [this] {
+        loadSelectedProfile();
+        if (!m_gridFullscreen)
+            toggleGridFullscreen();
+    });
+
+    QWidget *profTab = new QWidget;
+    auto *profLayout = new QVBoxLayout(profTab);
+    profLayout->addWidget(saveProfBtn);
+    profLayout->addWidget(m_profileList, 1);
+    auto *profBtnRow = new QHBoxLayout;
+    profBtnRow->addWidget(renameProfBtn);
+    profBtnRow->addWidget(delProfBtn);
+    profLayout->addLayout(profBtnRow);
+    profLayout->addWidget(loadProfBtn);
+    profLayout->addWidget(startFsProfBtn);
+    tabs->addTab(profTab, QStringLiteral("Профили"));
+
     auto *leftLayout = new QVBoxLayout;
     leftLayout->addWidget(tabs);
 
@@ -157,6 +202,30 @@ MainWindow::MainWindow(QWidget *parent)
     m_layoutCombo->setCurrentIndex(1);
     connect(m_layoutCombo, QOverload<int>::of(&QComboBox::activated),
             this, &MainWindow::setLayoutPreset);
+
+    // дебаунс-таймер: после завершения перетаскивания окна перестроить сетку
+    m_resizeTimer = new QTimer(this);
+    m_resizeTimer->setSingleShot(true);
+    m_resizeTimer->setInterval(250);
+    connect(m_resizeTimer, &QTimer::timeout, this, [this] {
+        if (!m_gridWidget)
+            return;
+        const QSize sz = m_gridWidget->size();
+        const bool changed = (sz != m_lastGridSize);
+        m_lastGridSize = sz;
+        if (!changed)
+            return;                       // размер не менялся — ничего делать не нужно
+
+        rebuildGrid();                    // ячейки заново распределятся по новому размеру
+
+        // Перезапуск декодеров делаем только при РЕАЛЬНОЙ смене размера сетки
+        // (ресайз/разворот окна). При простом перемещении окна size не меняется,
+        // сюда мы не доходим — потоки не дёргаются.
+        for (VideoCell *cell : std::as_const(m_cells)) {
+            if (cell->hasStream() && cell->isVisible())
+                cell->restartStream();
+        }
+    });
 
     m_gridWidget = new QWidget;
     m_gridWidget->setObjectName("gridRoot");   // в FS-режиме: фон без рамки (см. style.qss)
@@ -195,6 +264,27 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_statusLabel = new QLabel(QStringLiteral("Готов. Нажмите «Поиск ONVIF» для поиска камер."));
     statusBar()->addPermanentWidget(m_statusLabel);
+
+    // --- Восстановление последнего состояния (размер/позиция окна, профиль) ---
+    {
+        QSettings st;
+        const QByteArray geom = st.value("window/geometry").toByteArray();
+        if (!geom.isEmpty())
+            restoreGeometry(geom);
+        else
+            resize(1280, 720);
+        const int preset = st.value("window/layoutPreset", 202).toInt();
+        for (int i = 0; i < m_layoutCombo->count(); ++i) {
+            if (m_layoutCombo->itemData(i).toInt() == preset) {
+                m_layoutCombo->setCurrentIndex(i);
+                setLayoutPreset(i);
+                break;
+            }
+        }
+        m_currentProfile = st.value("profile/current").toString();
+    }
+
+    refreshProfileList();
 
     // --- Верхняя шапка с названием приложения ---
     {
@@ -302,7 +392,8 @@ void MainWindow::addManualStream()
 }
 
 void MainWindow::openStreamInCell(const QString &url, const QString &title,
-                                  const QString &user, const QString &password)
+                                  const QString &user, const QString &password,
+                                  int cellIndex)
 {
     if (m_streams.size() >= MAX_STREAMS) {
         QMessageBox::warning(this, QStringLiteral("Потоки"),
@@ -310,21 +401,41 @@ void MainWindow::openStreamInCell(const QString &url, const QString &title,
         return;
     }
 
-    int idx = firstFreeCell();
-    if (idx < 0) {
-        // расширить сетку на строку (не больше MAX_STREAMS ячеек)
-        const int currentTotal = m_cols * m_rows;
-        if (currentTotal >= MAX_STREAMS) {
-            QMessageBox::warning(this, QStringLiteral("Потоки"),
-                                 QStringLiteral("Нет свободных ячеек."));
-            return;
+    // явный слот профиля: освободить место и создать недостающие ячейки
+    if (cellIndex >= 0) {
+        for (int i = 0; i < m_streams.size(); ++i) {
+            if (m_streams[i].cell == m_cells.value(cellIndex)) {
+                m_streams[i].cell->detach();
+                m_streams[i].stream->close();
+                delete m_streams[i].stream;
+                m_streams.removeAt(i);
+                break;
+            }
         }
-        const int need = qMin(currentTotal + m_cols, MAX_STREAMS);
-        while (m_cells.size() < need)
+        while (m_cells.size() <= cellIndex)
             createOneCell();
-        m_rows = (need + m_cols - 1) / m_cols;
-        rebuildGrid();
-        idx = firstFreeCell();
+        if (cellIndex >= m_cols * m_rows) {
+            m_rows = (cellIndex + m_cols) / m_cols;   // расширить сетку рядами
+            rebuildGrid();
+        }
+    } else {
+        int idx = firstFreeCell();
+        if (idx < 0) {
+            // расширить сетку на строку (не больше MAX_STREAMS ячеек)
+            const int currentTotal = m_cols * m_rows;
+            if (currentTotal >= MAX_STREAMS) {
+                QMessageBox::warning(this, QStringLiteral("Потоки"),
+                                     QStringLiteral("Нет свободных ячеек."));
+                return;
+            }
+            const int need = qMin(currentTotal + m_cols, MAX_STREAMS);
+            while (m_cells.size() < need)
+                createOneCell();
+            m_rows = (need + m_cols - 1) / m_cols;
+            rebuildGrid();
+            idx = firstFreeCell();
+        }
+        cellIndex = idx;
     }
 
     auto *stream = new CameraStream(this);
@@ -334,12 +445,13 @@ void MainWindow::openStreamInCell(const QString &url, const QString &title,
 
     StreamEntry entry;
     entry.stream = stream;
-    entry.cell = m_cells[idx];
+    entry.cell = m_cells[cellIndex];
     entry.url = url;
     entry.title = title;
     m_streams.append(entry);
 
     entry.cell->attach(stream, title);
+    entry.cell->setStreamCredentials(user, password);
     stream->open(url, user, password);
     m_statusLabel->setText(QStringLiteral("Подключаемся к %1 ...").arg(url));
 }
@@ -418,6 +530,10 @@ void MainWindow::rebuildGrid()
         m_grid->setColumnStretch(c, 1);
     for (int r = 0; r < m_rows; ++r)
         m_grid->setRowStretch(r, 1);
+
+    // Принудительно пересчитать геометрию — ячейки сразу получают новый размер.
+    if (m_gridWidget && m_gridWidget->isVisible())
+        m_gridWidget->layout()->activate();
 }
 
 void MainWindow::onCellMaximizeRequested(VideoCell *cell)
@@ -633,3 +749,301 @@ void MainWindow::startProfile(const QStringList &names, bool fullscreen)
                                   Qt::QueuedConnection);
     }
 }
+
+// ---------- События окна: ресайз / показ / закрытие ----------
+
+void MainWindow::resizeEvent(QResizeEvent *ev)
+{
+    QMainWindow::resizeEvent(ev);
+    // Дебаунс: при ПЕРЕМЕЩЕНИИ окна size не меняется — по истечении таймера
+    // изменения не обнаружится и сетку не тронем. При реальном ресайзе или
+    // входе/выходе из полноэкранного режима (FS-сетка тоже масштабируется)
+    // сетка будет перестроена один раз после завершения изменения размера.
+    if (m_resizeTimer)
+        m_resizeTimer->start();
+}
+
+void MainWindow::showEvent(QShowEvent *ev)
+{
+    QMainWindow::showEvent(ev);
+    if (m_shownOnce)
+        return;
+    m_shownOnce = true;
+
+    // восстановить последнюю сетку из профиля (только если ещё нет потоков)
+    if (!m_currentProfile.isEmpty() && m_streams.isEmpty()) {
+        const QList<CameraProfile> profiles = ProfileStore::load();
+        for (const CameraProfile &p : profiles) {
+            if (p.name.compare(m_currentProfile, Qt::CaseInsensitive) == 0) {
+                applyProfile(p);
+                break;
+            }
+        }
+    }
+
+    if (m_pendingFsStart && !m_gridFullscreen)
+        toggleGridFullscreen();          // --fullscreen: разворот после показа
+
+    m_lastGridSize = m_gridWidget ? m_gridWidget->size() : QSize();
+}
+
+void MainWindow::closeEvent(QCloseEvent *ev)
+{
+    QSettings st;
+    st.setValue("window/geometry", saveGeometry());
+    st.setValue("window/layoutPreset",
+                m_layoutCombo ? m_layoutCombo->currentData().toInt() : 202);
+    st.setValue("profile/current", m_currentProfile);
+    QMainWindow::closeEvent(ev);
+}
+
+// ---------- Профили сетки ----------
+
+QString MainWindow::findSavedNameByUrl(const QString &url) const
+{
+    const QList<SavedCamera> list = CameraStore::load();
+    for (const SavedCamera &c : list) {
+        if (c.url().compare(url, Qt::CaseInsensitive) == 0)
+            return c.name.isEmpty() ? c.ip : c.name;
+    }
+    return QString();
+}
+
+void MainWindow::closeAllStreams()
+{
+    for (StreamEntry &e : m_streams) {
+        if (e.cell)
+            e.cell->detach();
+        if (e.stream) {
+            e.stream->close();
+            delete e.stream;
+        }
+    }
+    m_streams.clear();
+}
+
+void MainWindow::applyProfile(const CameraProfile &p)
+{
+    closeAllStreams();
+
+    // раскладка из профиля
+    m_cols = qMax(1, p.cols);
+    m_rows = (p.entries.size() + m_cols - 1) / m_cols;
+    if (m_rows < 1)
+        m_rows = 1;
+    const int total = qMin(m_cols * m_rows, MAX_STREAMS);
+    while (m_cells.size() < total)
+        createOneCell();
+    for (int i = 0; i < m_cells.size(); ++i)
+        m_cells[i]->setVisible(i < total);
+    // подсветить пресет в комбобоксе, если есть совпадение
+    if (m_layoutCombo) {
+        const int data = m_cols * 100 + m_rows;
+        for (int i = 0; i < m_layoutCombo->count(); ++i) {
+            if (m_layoutCombo->itemData(i).toInt() == data) {
+                m_layoutCombo->blockSignals(true);
+                m_layoutCombo->setCurrentIndex(i);
+                m_layoutCombo->blockSignals(false);
+                break;
+            }
+        }
+    }
+    rebuildGrid();
+
+    const QList<SavedCamera> saved = CameraStore::load();
+    for (const ProfileEntry &e : p.entries) {
+        QString url = e.url, user = e.user, pass = e.password, title = e.title;
+        // приоритет у сохранённой камеры: актуальные реквизиты из хранилища
+        if (!e.camName.isEmpty()) {
+            for (const SavedCamera &c : saved) {
+                if ((c.name.isEmpty() ? c.ip : c.name).compare(e.camName, Qt::CaseInsensitive) == 0
+                    || c.name.compare(e.camName, Qt::CaseInsensitive) == 0) {
+                    url = c.url();
+                    user = c.user;
+                    pass = c.password;
+                    if (title.isEmpty())
+                        title = c.name.isEmpty() ? c.ip : c.name;
+                    break;
+                }
+            }
+        }
+        if (url.isEmpty())
+            continue;
+        if (title.isEmpty()) {
+            const QString host = QUrl(url).host();
+            title = host.isEmpty() ? url : host;
+        }
+        openStreamInCell(url, title, user, pass, e.cellIndex);
+    }
+
+    m_currentProfile = p.name;
+    QSettings().setValue("profile/current", m_currentProfile);
+    refreshProfileList();
+    m_statusLabel->setText(QStringLiteral("Профиль «%1»: камер в сетке — %2")
+                               .arg(p.name).arg(p.entries.size()));
+}
+
+void MainWindow::refreshProfileList()
+{
+    if (!m_profileList)
+        return;
+    const QString sel = m_profileList->currentItem()
+                            ? m_profileList->currentItem()->text() : QString();
+    m_profileList->clear();
+    const QList<CameraProfile> profiles = ProfileStore::load();
+    for (const CameraProfile &p : profiles) {
+        auto *item = new QListWidgetItem(QStringLiteral("%1  (%2)")
+                                             .arg(p.name)
+                                             .arg(p.entries.size()));
+        item->setToolTip(QStringLiteral("Камер: %1 · Колонки: %2\n"
+                                        "Двойной клик — загрузить профиль")
+                             .arg(p.entries.size()).arg(p.cols));
+        item->setData(Qt::UserRole, p.name);
+        if (p.name.compare(m_currentProfile, Qt::CaseInsensitive) == 0) {
+            QFont f = item->font();
+            f.setBold(true);
+            item->setFont(f);
+            item->setText(QStringLiteral("● %1").arg(item->text()));
+        }
+        m_profileList->addItem(item);
+        if (!sel.isEmpty() && p.name == sel)
+            m_profileList->setCurrentItem(item);
+    }
+}
+
+void MainWindow::saveGridAsProfile()
+{
+    if (m_streams.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Профили"),
+                                 QStringLiteral("В сетке нет подключённых камер — "
+                                                "сначала добавьте потоки."));
+        return;
+    }
+
+    bool ok = false;
+    QString def = m_currentProfile.isEmpty()
+                      ? QStringLiteral("Профиль %1").arg(ProfileStore::load().size() + 1)
+                      : m_currentProfile;
+    const QString name = QInputDialog::getText(this, QStringLiteral("Сохранить профиль"),
+                                               QStringLiteral("Имя профиля:"),
+                                               QLineEdit::Normal, def, &ok).trimmed();
+    if (!ok || name.isEmpty())
+        return;
+
+    CameraProfile p;
+    p.name = name;
+    p.cols = m_cols;
+    for (const StreamEntry &e : m_streams) {
+        if (!e.cell)
+            continue;
+        ProfileEntry pe;
+        pe.cellIndex = m_cells.indexOf(e.cell);
+        pe.url = e.url;
+        pe.title = e.title;
+        pe.camName = findSavedNameByUrl(e.url);
+        // логин/пароль берём из ячейки (в Cell они уже заданы через setStreamCredentials)
+        pe.user.clear();
+        pe.password.clear();
+        const QList<SavedCamera> saved = CameraStore::load();
+        for (const SavedCamera &c : saved) {
+            if (c.url().compare(e.url, Qt::CaseInsensitive) == 0) {
+                pe.user = c.user;
+                pe.password = c.password;
+                break;
+            }
+        }
+        p.entries.append(pe);
+    }
+
+    if (!ProfileStore::addOrUpdate(p)) {
+        QMessageBox::warning(this, QStringLiteral("Профили"),
+                             QStringLiteral("Не удалось сохранить профиль."));
+        return;
+    }
+    m_currentProfile = name;
+    QSettings().setValue("profile/current", name);
+    refreshProfileList();
+    m_statusLabel->setText(QStringLiteral("Профиль «%1» сохранен (%2 камер)")
+                               .arg(name).arg(p.entries.size()));
+}
+
+QListWidgetItem *MainWindow::selectedProfileItem() const
+{
+    return m_profileList ? m_profileList->currentItem() : nullptr;
+}
+
+void MainWindow::loadSelectedProfile()
+{
+    QListWidgetItem *item = selectedProfileItem();
+    if (!item) {
+        QMessageBox::information(this, QStringLiteral("Профили"),
+                                 QStringLiteral("Выберите профиль в списке."));
+        return;
+    }
+    const QString name = item->data(Qt::UserRole).toString();
+    const QList<CameraProfile> profiles = ProfileStore::load();
+    for (const CameraProfile &p : profiles) {
+        if (p.name.compare(name, Qt::CaseInsensitive) == 0) {
+            applyProfile(p);
+            return;
+        }
+    }
+    QMessageBox::warning(this, QStringLiteral("Профили"),
+                         QStringLiteral("Профиль «%1» не найден в хранилище.").arg(name));
+    refreshProfileList();
+}
+
+void MainWindow::renameCurrentProfile()
+{
+    QListWidgetItem *item = selectedProfileItem();
+    if (!item) {
+        QMessageBox::information(this, QStringLiteral("Профили"),
+                                 QStringLiteral("Выберите профиль в списке."));
+        return;
+    }
+    const QString oldName = item->data(Qt::UserRole).toString();
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this, QStringLiteral("Переименовать профиль"),
+                                                  QStringLiteral("Новое имя:"),
+                                                  QLineEdit::Normal, oldName, &ok).trimmed();
+    if (!ok || newName.isEmpty() || newName == oldName)
+        return;
+    if (!ProfileStore::rename(oldName, newName)) {
+        QMessageBox::warning(this, QStringLiteral("Профили"),
+                             QStringLiteral("Не удалось переименовать профиль."));
+        return;
+    }
+    if (m_currentProfile == oldName) {
+        m_currentProfile = newName;
+        QSettings().setValue("profile/current", newName);
+    }
+    refreshProfileList();
+}
+
+void MainWindow::deleteSelectedProfile()
+{
+    QListWidgetItem *item = selectedProfileItem();
+    if (!item) {
+        QMessageBox::information(this, QStringLiteral("Профили"),
+                                 QStringLiteral("Выберите профиль в списке."));
+        return;
+    }
+    const QString name = item->data(Qt::UserRole).toString();
+    const auto ret = QMessageBox::question(
+        this, QStringLiteral("Профили"),
+        QStringLiteral("Удалить профиль «%1»? Камеры в сетке останутся.").arg(name));
+    if (ret != QMessageBox::Yes)
+        return;
+    ProfileStore::removeByName(name);
+    if (m_currentProfile == name) {
+        m_currentProfile.clear();
+        QSettings().setValue("profile/current", QString());
+    }
+    refreshProfileList();
+}
+
+void MainWindow::onProfileDoubleClicked()
+{
+    loadSelectedProfile();
+}
+

@@ -11,12 +11,16 @@ class CameraStream;
 class QComboBox;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QLabel;
 class QGridLayout;
 class QWidget;
 class QKeyEvent;
 class QFrame;
+class QResizeEvent;
+class QShowEvent;
+class QTimer;
 
 // Главное окно клиента камер
 class MainWindow : public QMainWindow
@@ -31,6 +35,9 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent *ev) override;
+    void resizeEvent(QResizeEvent *ev) override;   // перестроить сетку при изменении размера окна
+    void showEvent(QShowEvent *ev) override;       // применить профиль, если окно ещё не показано
+    void closeEvent(QCloseEvent *ev) override;     // сохранить геометрию/профиль при выходе
 
 private slots:
     // ONVIF-обнаружение
@@ -52,6 +59,14 @@ private slots:
     void deleteSelectedSaved();
     void openScanDialog();
 
+    // Профили сетки (наборы камер + раскладка)
+    void saveGridAsProfile();
+    void loadSelectedProfile();
+    void renameCurrentProfile();
+    void deleteSelectedProfile();
+    void refreshProfileList();
+    void onProfileDoubleClicked();
+
 private:
     struct StreamEntry {
         CameraStream *stream = nullptr;
@@ -63,7 +78,12 @@ private:
     void rebuildGrid();
     void createOneCell();
     void openStreamInCell(const QString &url, const QString &title,
-                          const QString &user, const QString &password);
+                          const QString &user, const QString &password,
+                          int cellIndex = -1);
+    void closeAllStreams();
+    void applyProfile(const CameraProfile &p);
+    QString findSavedNameByUrl(const QString &url) const;
+    QListWidgetItem *selectedProfileItem() const;
     int firstFreeCell() const;
     void refreshSavedList();
     void connectSaved(const SavedCamera &c);
@@ -86,6 +106,14 @@ private:
     QFrame  *m_header = nullptr;          // шапка приложения (прячется в FS)
     QWidget *m_gridToolbar = nullptr;     // строка «Сетка: … / Полный экран» (прячется в FS)
     bool m_gridFullscreen = false;
+
+    // Профили сетки
+    QListWidget *m_profileList = nullptr;
+    QString m_currentProfile;             // имя загруженного профиля (если есть)
+    bool m_shownOnce = false;
+    bool m_pendingFsStart = false;        // --fullscreen до показа окна
+    QTimer *m_resizeTimer = nullptr;      // дебаунс перестроения сетки при ресайзе
+    QSize m_lastGridSize;                 // последний размер сетки (для детекта реального ресайза)
 
     OnvifDiscovery *m_discovery = nullptr;
     QList<StreamEntry> m_streams;         // активные потоки (max 18)
