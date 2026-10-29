@@ -39,3 +39,38 @@ public:
     static bool addOrUpdate(const SavedCamera &cam);  // добавить/обновить по имени+URL
     static bool removeAt(int index);    // удалить по индексу загруженного списка
 };
+
+// ---------- Профили сетки ----------
+// Профиль = раскладка сетки (колонки) + список подключённых камер (по имени
+// из хранилища либо полным RTSP URL, если камера не сохранена).
+
+// Одна запись профиля: привязка камеры к позиции в сетке
+struct ProfileEntry
+{
+    int cellIndex = -1;     // позиция ячейки в сетке (0..N)
+    QString camName;        // имя сохранённой камеры (если есть)
+    QString url;            // RTSP URL (резерв / для несохранённых камер)
+    QString user;
+    QString password;
+    QString title;          // отображаемое имя в ячейке
+};
+
+struct CameraProfile
+{
+    QString name;
+    int cols = 2;
+    QList<ProfileEntry> entries;
+};
+
+// Хранилище профилей: ~/.config/onvif-client/profiles.json
+class ProfileStore
+{
+public:
+    static QString filePath();
+    static QList<CameraProfile> load();
+    static bool saveAll(const QList<CameraProfile> &list);
+    // добавить/заменить профиль по имени
+    static bool addOrUpdate(const CameraProfile &p);
+    static bool removeByName(const QString &name);
+    static bool rename(const QString &oldName, const QString &newName);
+};

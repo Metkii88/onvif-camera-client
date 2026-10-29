@@ -17,10 +17,29 @@ void VideoCell::attach(CameraStream *stream, const QString &title)
     m_title = title;
     m_status = QStringLiteral("подключение...");
     if (m_stream) {
+        // запоминаем параметры для перезапуска после ресайза ячейки
+        m_url = m_stream->url();
         connect(m_stream, &CameraStream::frameReady, this, &VideoCell::onFrame);
         connect(m_stream, &CameraStream::errorOccurred, this, &VideoCell::onError);
         connect(m_stream, &CameraStream::connected, this, &VideoCell::onConnected);
     }
+    update();
+}
+
+void VideoCell::setStreamCredentials(const QString &user, const QString &password)
+{
+    m_user = user;
+    m_password = password;
+}
+
+void VideoCell::restartStream()
+{
+    if (!m_stream || m_url.isEmpty())
+        return;
+    // пересоздаём декодер: кадры будут масштабироваться под новый размер ячейки
+    m_stream->open(m_url, m_user, m_password);
+    m_status = QStringLiteral("переподключение после изменения размера...");
+    m_last = QImage();
     update();
 }
 
@@ -33,6 +52,9 @@ void VideoCell::detach()
     m_last = QImage();
     m_title.clear();
     m_status = QStringLiteral("нет потока");
+    m_url.clear();
+    m_user.clear();
+    m_password.clear();
     update();
 }
 
